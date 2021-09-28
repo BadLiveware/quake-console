@@ -1,10 +1,10 @@
-; Mintty quake console: Visor-like functionality for Windows
+; app quake console: Visor-like functionality for Windows
 ; Version: 1.8
 ; Author: Jon Rogers (lonepie@gmail.com)
-; URL: https://github.com/lonepie/mintty-quake-console
+; URL: https://github.com/lonepie/app-quake-console
 ; Credits:
-;   Originally forked from: https://github.com/marcharding/mintty-quake-console
-;   mintty: https://github.com/mintty/
+;   Originally forked from: https://github.com/marcharding/app-quake-console
+;   app: https://github.com/app/
 ;   Visor: http://visor.binaryage.com/
 ;
 ; MIT License
@@ -33,6 +33,11 @@
 ;*******************************************************************************
 #NoEnv
 #SingleInstance force
+#Persistent
+; #Warn
+
+WriteLog("Script starting")
+
 SendMode Input
 DetectHiddenWindows, on
 SetWinDelay, -1
@@ -48,14 +53,16 @@ DllCall("SetThreadDpiAwarenessContext", "ptr", -3, "ptr")
 ;               Preferences & Variables
 ;*******************************************************************************
 VERSION = 1.8
-SCRIPTNAME := "mintty-quake-console"
+SCRIPTNAME := "quake-console"
 iniFile := A_ScriptDir . "\" . SCRIPTNAME . ".ini"
 localIniFile := StrReplace(iniFile, ".ini", ".local.ini")
 if (FileExist(localIniFile)) {
-  iniFile := localIniFile
+    WriteLog("Found local ini file, using that instead: " . localIniFile)
+    iniFile := localIniFile
 }
-IniRead, minttyPath, %iniFile%, General, mintty_path, % cygwinBinDir . "\mintty.exe"
-IniRead, minttyArgs, %iniFile%, General, mintty_args, -
+IniRead, appPath, %iniFile%, General, app_path, -
+IniRead, appArgs, %iniFile%, General, app_args, -
+IniRead, appIcon, %iniFile%, General, app_icon, %appPath%
 IniRead, consoleHotkey, %iniFile%, General, hotkey, ^``
 IniRead, startWithWindows, %iniFile%, Display, start_with_windows, 0
 IniRead, startHidden, %iniFile%, Display, start_hidden, 1
@@ -71,31 +78,27 @@ IniRead, animationTimeout, %iniFile%, Display, animation_timeout, 10
 IniRead, windowBorders, %iniFile%, Display, window_borders, 0
 IniRead, displayOnMonitor, %iniFile%, Display, display_on_monitor, 0
 
-if !FileExist(iniFile)
-{
+if !FileExist(iniFile) {
     SaveSettings()
 }
-else
-{
+else {
     ; add/remove windows startup if needed
     CheckWindowsStartup(startWithWindows)
 }
 
-minttyPath := ExpandEnvVars(minttyPath)
-minttyArgs := ExpandEnvVars(minttyArgs)
+appPath := ExpandEnvVars(appPath)
+appArgs := ExpandEnvVars(appArgs)
 
-; wsltty instead of cygwin
-if InStr(minttyPath, "wsltty")
-  SplitPath, minttyPath, , cygwinBinDir
-
-; path to mintty
-minttyPath_args := minttyPath . " " . minttyArgs
+; path to app
+appPathArgs := appPath . " " . appArgs
+WriteLog("Full app command: " . appPathArgs)
 
 ; initial height and width of console window
 heightConsoleWindow := initialHeight
 widthConsoleWindow := initialWidth
 
 isVisible := False
+app_pid = 0
 
 ;*******************************************************************************
 ;               Hotkeys
@@ -106,7 +109,7 @@ Hotkey, %consoleHotkey%, ConsoleHotkey
 ;               Menu
 ;*******************************************************************************
 if !InStr(A_ScriptName, ".exe")
-  Menu, Tray, Icon, %A_ScriptDir%\%SCRIPTNAME%.ico
+    Menu, Tray, Icon, %appIcon%
 Menu, Tray, NoStandard
 ; Menu, Tray, MainWindow
 Menu, Tray, Tip, %SCRIPTNAME% %VERSION%
@@ -130,103 +133,111 @@ return
 ;*******************************************************************************
 ;               Functions / Labels
 ;*******************************************************************************
-init()
-{
+init() {
     global
     initCount++
     ; get last active window
-    WinGet, hw_current, ID, A
-    if !WinExist("ahk_class mintty") {
-        hw_mintty = 0
-        Run %minttyPath_args%, %cygwinBinDir%, Hide, hw_mintty
-        WinWait ahk_pid %hw_mintty%, , 1
+    WinGet, current_pid, ID, A
+    if !WinExist("ahk_pid" . app_pid) {
+        WriteLog("Couldnt find an ative window, starting one")
+        app_pid = 0
+        Run %appPathArgs%, %cygwinBinDir%, Hide, app_pid
+        WriteLog("Started application with pid " . app_pid)
+
+        WinWait, ahk_pid %app_pid%, , 5
         if ErrorLevel {
             ; WinWait Timed out (WHY?!?)
-            WinGet, hw_mintty, PID, ahk_exe %minttyPath%
+            WinGet, app_pid, PID, ahk_exe %appPath%
         }
     }
     else {
-        WinGet, hw_mintty, PID, ahk_class mintty
+        WinGet, app_pid, PID, ahk_class app
     }
 
-    WinGetPos, OrigXpos, OrigYpos, OrigWinWidth, OrigWinHeight, ahk_pid %hw_mintty%
-    toggleScript("init")
+    ; MsgBox, 4, %SCRIPTNAME%, "Is active"
+    WinActivate, ahk_pid %app_pid%
+    ; IfWinActive, ahk_pid %app_pid% 
+    ; {
+    ;     MsgBox, 4, %SCRIPTNAME%, "Is active"
+    ;     Slide("ahk_pid" . app_pid, "Out")
+    ; }
+
+    WinGetPos, OrigXpos, OrigYpos, OrigWinWidth, OrigWinHeight, ahk_pid %app_pid%
+    toggleScript("on")
+    if (initCount = 1 and startHidden) {
+        toggle()
+    }
     setAlwaysOnTop()
+
+    WinActivate, ahk_id %current_pid%
+    Slide("ahk_pid" . app_pid, "Out")
 }
 
-toggle()
-{
+toggle() {
     global
 
-    IfWinActive ahk_pid %hw_mintty%
+    IfWinActive ahk_pid %app_pid% 
     {
-        Slide("ahk_pid" . hw_mintty, "Out")
+        Slide("ahk_pid" . app_pid, "Out")
         ; reset focus to last active window
-        WinActivate, ahk_id %hw_current%
+        WinActivate, ahk_id %current_pid%
     }
-    else
-    {
+    else {
         ; get last active window
-        WinGet, hw_current, ID, A
+        WinGet, current_pid, ID, A
 
         if (!alwaysOnTop || (alwaysOnTop && !isVisible)) {
-            WinActivate ahk_pid %hw_mintty%
-            Slide("ahk_pid" . hw_mintty, "In")
+            WinActivate ahk_pid %app_pid%
+            Slide("ahk_pid" . app_pid, "In")
         }
         else if (isVisible) {
-            Slide("ahk_pid" . hw_mintty, "Out")
+            Slide("ahk_pid" . app_pid, "Out") 
             ; reset focus to last active window
-            WinActivate, ahk_id %hw_current%
+            WinActivate, ahk_id %current_pid%
         }
     }
 }
 
-Slide(Window, Dir)
-{
-    global widthConsoleWindow, animationModeFade, animationModeSlide, animationStep, animationTimeout, autohide, isVisible, currentTrans, initialTrans
+Slide(Window, Dir) {
+    global widthConsoleWindow, animationModeFade, animationModeSlide, animationStep, animationTimeout, autohide, isVisible, currentTrans, initialTrans, displayOnMonitor
     WinGetPos, Xpos, Ypos, WinWidth, WinHeight, %Window%
 
     WinGet, testTrans, Transparent, %Window%
-    if (testTrans = "" or (animationModeFade and currentTrans = 0))
-    {
+    if (testTrans = "" or (animationModeFade and currentTrans = 0)) {
         ; Solution for Windows 8 to find window without borders, only 1st call will flash borders
-        WinSet, Style, +0x040000, %Window% ; show window border
+        WinSet, Style, +0xC00000, %Window% ; show window border
         WinSet, Transparent, %currentTrans%, %Window%
         if (!windowBorders)
-            WinSet, Style, -0x040000, %Window% ; hide window border
-        ; this problem seems to happen if mintty's transparency is set to "Off"
-        ; mintty will lose transparency when the window loses focus, so it's best to just use
-        ; mintty's built in transparency setting
+            WinSet, Style, -0xC00000, %Window% ; hide window border
+        ; this problem seems to happen if app's transparency is set to "Off"
+        ; app will lose transparency when the window loses focus, so it's best to just use
+        ; app's built in transparency setting
     }
 
     VirtScreenPos(ScreenLeft, ScreenTop, ScreenWidth, ScreenHeight)
 
-    if (animationModeFade)
-    {
+    if (animationModeFade) {
         WinMove, %Window%,, WinLeft, ScreenTop
     }
 
     ; Multi monitor support.  Always move to current window
-    If (Dir = "In")
-    {
+    If (Dir = "In") {
         WinShow %Window%
         width := ScreenWidth * widthConsoleWindow / 100
-        if (displayOnMonitor  > 0)
+        if (displayOnMonitor > 0)
             WinLeft := ScreenLeft
         else
             WinLeft := ScreenLeft + (1 - widthConsoleWindow/100) * ScreenWidth / 2
         WinMove, %Window%, , WinLeft, , width
     }
-    Loop
-    {
+    Loop {
         inConditional := (animationModeSlide) ? (Ypos >= ScreenTop) : (currentTrans == initialTrans)
         outConditional := (animationModeSlide) ? (Ypos <= (-WinHeight)) : (currentTrans == 0)
 
         If (Dir = "In") And inConditional Or (Dir = "Out") And outConditional
             Break
 
-        if (animationModeFade = 1)
-        {
+        if (animationModeFade = 1) {
             dRate := animationStep/300*255
             dT := % (Dir = "In") ? currentTrans + dRate : currentTrans - dRate
             dT := (dT < 0) ? 0 : ((dT > initialTrans) ? initialTrans : dT)
@@ -234,8 +245,7 @@ Slide(Window, Dir)
             WinSet, Transparent, %dT%, %Window%
             currentTrans := dT
         }
-        else
-        {
+        else {
             dRate := animationStep
             dY := % (Dir = "In") ? Ypos + dRate : Ypos - dRate
             WinMove, %Window%,,, dY
@@ -245,13 +255,13 @@ Slide(Window, Dir)
         Sleep, %animationTimeout%
     }
 
-    If (Dir = "In")  {
+    If (Dir = "In") {
         WinMove, %Window%,,, ScreenTop
         if (autohide)
             SetTimer, HideWhenInactive, 250
         isVisible := True
     }
-    If (Dir = "Out")  {
+    If (Dir = "Out") {
         WinHide %Window%
         if (autohide)
             SetTimer, HideWhenInactive, Off
@@ -262,29 +272,33 @@ Slide(Window, Dir)
 toggleScript(state) {
     ; enable/disable script effects, hotkeys, etc
     global
-    ; WinGetPos, Xpos, Ypos, WinWidth, WinHeight, ahk_pid %hw_mintty%
+    ; WinGetPos, Xpos, Ypos, WinWidth, WinHeight, ahk_pid %app_pid%
     if (state = "on" or state = "init") {
-        If !WinExist("ahk_pid" . hw_mintty) {
+        If !WinExist("ahk_pid" . app_pid) {
+            WriteLog("Unable to find window for pid: " . app_pid . " exiting")
             init()
-            return
+            ExitApp
         }
 
-        ; use mintty's transparency setting, if it's set
-        WinGet, minttyTrans, Transparent, ahk_pid %hw_mintty%
-        if (minttyTrans <> "")
-            initialTrans:=minttyTrans
-        WinSet, Transparent, %initialTrans%, ahk_pid %hw_mintty%
+        ; use app's transparency setting, if it's set
+        WinGet, appTrans, Transparent, ahk_pid %app_pid%
+        if (appTrans <> "")
+            initialTrans:=appTrans
+        WinSet, Transparent, %initialTrans%, ahk_pid %app_pid%
         currentTrans:=initialTrans
 
-        WinHide ahk_pid %hw_mintty%
-        if (!windowBorders)
-            WinSet, Style, -0xC40000, ahk_pid %hw_mintty% ; hide window borders and caption/title
+        WinHide ahk_pid %app_pid%
+        winExists := WinExist("ahk_pid" . app_pid)
+        WriteLog("Window exists? " . winExists)
+        if (!windowBorders) { 
+            WinSet, Style, -0xC00000, ahk_pid %app_pid% ; hide window borders and caption/title
+        }
 
         VirtScreenPos(ScreenLeft, ScreenTop, ScreenWidth, ScreenHeight)
 
         width := ScreenWidth * widthConsoleWindow / 100
-        left := ScreenLeft + ((ScreenWidth - width) /  2)
-        WinMove, ahk_pid %hw_mintty%, , %left%, -%heightConsoleWindow%, %width%, %heightConsoleWindow% ; resize/move
+        left := ScreenLeft + ((ScreenWidth - width) / 2)
+        WinMove, ahk_pid %app_pid%, , %left%, -%heightConsoleWindow%, %width%, %heightConsoleWindow% ; resize/move
 
         scriptEnabled := True
         Menu, Tray, Check, Enabled
@@ -293,26 +307,36 @@ toggleScript(state) {
             return
         }
 
-        WinShow ahk_pid %hw_mintty%
-        WinActivate ahk_pid %hw_mintty%
-        Slide("ahk_pid" . hw_mintty, "In")
+        WinShow ahk_pid %app_pid%
+        WinActivate ahk_pid %app_pid%
+        Slide("ahk_pid" . app_pid, "In")
     }
     else if (state = "off") {
-            WinSet, Style, +0xC40000, ahk_pid %hw_mintty% ; show window borders and caption/title
+        WinSet, Style, +0xC00000, ahk_pid %app_pid% ; show window borders and caption/title
         if (OrigYpos >= 0)
-            WinMove, ahk_pid %hw_mintty%, , %OrigXpos%, %OrigYpos%, %OrigWinWidth%, %OrigWinHeight% ; restore size / position
+            WinMove, ahk_pid %app_pid%, , %OrigXpos%, %OrigYpos%, %OrigWinWidth%, %OrigWinHeight% ; restore size / position
         else
-            WinMove, ahk_pid %hw_mintty%, , %OrigXpos%, 100, %OrigWinWidth%, %OrigWinHeight%
-        WinShow, ahk_pid %hw_mintty% ; show window
+            WinMove, ahk_pid %app_pid%, , %OrigXpos%, 100, %OrigWinWidth%, %OrigWinHeight%
+        WinShow, ahk_pid %app_pid% ; show window
         scriptEnabled := False
         Menu, Tray, Uncheck, Enabled
+        killProcess(app_pid)
     }
 }
 
+killProcess(pid) {
+    WriteLog("Seeing if application is running with pid " . pid)
+    Process, Exist, %pid%
+    processExists := ErrorLevel
+    if processExists != 0
+        WriteLog("Found application running with pid " . pid . " killing it")
+    RunWait, taskkill /PID %pid% /T /F
+}
+
 HideWhenInactive:
-    IfWinNotActive ahk_pid %hw_mintty%
+    IfWinNotActive ahk_pid %app_pid%
     {
-        Slide("ahk_pid" . hw_mintty, "Out")
+        Slide("ahk_pid" . app_pid, "Out")
         SetTimer, HideWhenInactive, Off
     }
 return
@@ -320,12 +344,12 @@ return
 ToggleVisible:
     if (isVisible)
     {
-        Slide("ahk_pid" . hw_mintty, "Out")
+        Slide("ahk_pid" . app_pid, "Out")
     }
     else
     {
-        WinActivate ahk_pid %hw_mintty%
-        Slide("ahk_pid" . hw_mintty, "In")
+        WinActivate ahk_pid %app_pid%
+        Slide("ahk_pid" . app_pid, "In")
     }
 return
 
@@ -345,12 +369,15 @@ return
 
 ConsoleHotkey:
     if (scriptEnabled) {
-        IfWinExist ahk_pid %hw_mintty%
+        WriteLog("Toggle key pressed")
+        IfWinExist ahk_pid %app_pid%
         {
+            WriteLog("Windows exists, toggling")
             toggle()
         }
         else
         {
+            WriteLog("Windows doesnt exists, running init")
             init()
         }
     }
@@ -359,19 +386,23 @@ return
 ExitSub:
     if A_ExitReason not in Logoff,Shutdown
     {
-        MsgBox, 4, %SCRIPTNAME%, Are you sure you want to exit?
-        IfMsgBox, No
-            return
+        WriteLog("Running exit hook")
+        ; MsgBox, 4, %SCRIPTNAME%, Are you sure you want to exit?
+        ; IfMsgBox, No
+        ;     return
         toggleScript("off")
     }
+    WriteLog("Script exiting")
 ExitApp
 
 ReloadSub:
-Reload
+    WriteLog("Reload event")
+    killProcess(app_pid)
+    Reload
 return
 
 AboutDlg:
-    MsgBox, 64, About, %SCRIPTNAME% AutoHotkey script`nVersion: %VERSION%`nAuthor: Jonathon Rogers <lonepie@gmail.com>`nURL: https://github.com/lonepie/mintty-quake-console
+    MsgBox, 64, About, %SCRIPTNAME% AutoHotkey script`nVersion: %VERSION%`nAuthor: Jonathon Rogers <lonepie@gmail.com>`nURL: https://github.com/lonepie/app-quake-console
 return
 
 ShowOptionsGui:
@@ -379,36 +410,36 @@ ShowOptionsGui:
 return
 
 EditSettings:
-EnvGet, envEditor, Editor
-if (StrLen(Trim(envEditor)) == 0)
-    envEditor := "notepad.exe"
-Run, %envEditor% %iniFile%
+    EnvGet, envEditor, Editor
+    if (StrLen(Trim(envEditor)) == 0)
+        envEditor := "notepad.exe"
+    Run, %envEditor% %iniFile%
 return
 
 ;*******************************************************************************
 ;               Extra Hotkeys
 ;*******************************************************************************
-#IfWinActive ahk_class mintty
-; why this method doesn't work, I don't know...
-; IncreaseHeight:
+#IfWinActive ahk_exe alacritty.exe
+    ; why this method doesn't work, I don't know...
+    ; IncreaseHeight:
 ^!NumpadAdd::
 ^+=::
-    if (WinActive("ahk_pid" . hw_mintty)) {
+    if (WinActive("ahk_pid" . app_pid)) {
 
-    VirtScreenPos(ScreenLeft, ScreenTop, ScreenWidth, ScreenHeight)
-    if (heightConsoleWindow < ScreenHeight) {
+        VirtScreenPos(ScreenLeft, ScreenTop, ScreenWidth, ScreenHeight)
+        if (heightConsoleWindow < ScreenHeight) {
             heightConsoleWindow += animationStep
-            WinMove, ahk_pid %hw_mintty%,,,,, heightConsoleWindow
+            WinMove, ahk_pid %app_pid%,,,,, heightConsoleWindow
         }
     }
 return
 ; DecreaseHeight:
 ^!NumpadSub::
 ^+-::
-    if (WinActive("ahk_pid" . hw_mintty)) {
+    if (WinActive("ahk_pid" . app_pid)) {
         if (heightConsoleWindow > 100) {
             heightConsoleWindow -= animationStep
-            WinMove, ahk_pid %hw_mintty%,,,,, heightConsoleWindow
+            WinMove, ahk_pid %app_pid%,,,,, heightConsoleWindow
         }
     }
 return
@@ -419,8 +450,8 @@ return
         VirtScreenPos(ScreenLeft, ScreenTop, ScreenWidth, ScreenHeight)
 
         width := ScreenWidth * widthConsoleWindow / 100
-        left := ScreenLeft + ((ScreenWidth - width) /  2)
-        WinMove, ahk_pid %hw_mintty%, , %left%, , %width%  ; resize/move
+        left := ScreenLeft + ((ScreenWidth - width) / 2)
+        WinMove, ahk_pid %app_pid%, , %left%, , %width% ; resize/move
     }
 return
 ; Increase Width
@@ -431,13 +462,13 @@ return
         VirtScreenPos(ScreenLeft, ScreenTop, ScreenWidth, ScreenHeight)
 
         width := ScreenWidth * widthConsoleWindow / 100
-        left := ScreenLeft + ((ScreenWidth - width) /  2)
-        WinMove, ahk_pid %hw_mintty%, , %left%, , %width%  ; resize/move
+        left := ScreenLeft + ((ScreenWidth - width) / 2)
+        WinMove, ahk_pid %app_pid%, , %left%, , %width% ; resize/move
     }
 return
 ; Toggle window borders
 ^!NumpadDiv::
-    WinSet, Style, ^0xC40000, ahk_pid %hw_mintty%
+    WinSet, Style, ^0xC40000, ahk_pid %app_pid%
     windowBorders := !windowBorders
 return
 ; Save Height & border state to ini
@@ -455,11 +486,10 @@ return
 ;*******************************************************************************
 ;               Options
 ;*******************************************************************************
-SaveSettings()
-{
+SaveSettings() {
     global
-    IniWrite, %minttyPath%, %iniFile%, General, mintty_path
-    IniWrite, %minttyArgs%, %iniFile%, General, mintty_args
+    IniWrite, %appPath%, %iniFile%, General, app_path
+    IniWrite, %appArgs%, %iniFile%, General, app_args
 
     ; Special case : If there is no key entered and both windows key and control key are checked
     If (consoleHotkey == "" and ControlKey and WindowsKey)
@@ -540,11 +570,11 @@ OptionsGui() {
         Gui, Add, GroupBox, x12 y130 w450 h250 , Display
         Gui, Add, Button, x242 y390 w100 h30 Default, Save
         Gui, Add, Button, x362 y390 w100 h30 , Cancel
-        Gui, Add, Text, x22 y30 w70 h20 , Mintty Path:
-        Gui, Add, Edit, x92 y30 w250 h20 VminttyPath, %minttyPath%
+        Gui, Add, Text, x22 y30 w70 h20 , app Path:
+        Gui, Add, Edit, x92 y30 w250 h20 VappPath, %appPath%
         Gui, Add, Button, x352 y30 w100 h20, Browse
-        Gui, Add, Text, x22 y60 w100 h20 , Mintty Arguments:
-        Gui, Add, Edit, x122 y60 w330 h20 VminttyArgs, %minttyArgs%
+        Gui, Add, Text, x22 y60 w100 h20 , app Arguments:
+        Gui, Add, Edit, x122 y60 w330 h20 VappArgs, %appArgs%
         Gui, Add, Text, x22 y90 w100 h20 , Hotkey Trigger:
         Gui, Add, Text, x232 y92 w10 h10, +
         Gui, Add, CheckBox, x245 y89 w90 h20 VWindowsKey, Windows Key
@@ -592,23 +622,23 @@ OptionsGui() {
             Break
     }
 
-    ButtonSave:
-        Gui, Submit
-        SaveSettings()
-        Reload
-    return
+ButtonSave:
+    Gui, Submit
+    SaveSettings()
+    Reload
+return
 
-    ButtonBrowse:
-        FileSelectFile, SelectedPath, 3, %A_MyDocuments%, Path to mintty.exe, Executables (*.exe)
-        if SelectedPath !=
-            GuiControl,, MinttyPath, %SelectedPath%
-    return
+ButtonBrowse:
+    FileSelectFile, SelectedPath, 3, %A_MyDocuments%, Path to app.exe, Executables (*.exe)
+    if SelectedPath !=
+        GuiControl,, appPath, %SelectedPath%
+return
 
-    GuiClose:
-    GuiEscape:
-    ButtonCancel:
-        Gui, Cancel
-    return
+GuiClose:
+GuiEscape:
+ButtonCancel:
+    Gui, Cancel
+return
 }
 
 ;*******************************************************************************
@@ -620,8 +650,7 @@ OptionsGui() {
 ;   "bottom"
 ;   "left"
 
-VirtScreenPos(ByRef mLeft, ByRef mTop, ByRef mWidth, ByRef mHeight)
-{
+VirtScreenPos(ByRef mLeft, ByRef mTop, ByRef mWidth, ByRef mHeight) {
     global displayOnMonitor
     if (displayOnMonitor > 0) {
         SysGet, Mon, Monitor, %displayOnMonitor%
@@ -639,7 +668,7 @@ VirtScreenPos(ByRef mLeft, ByRef mTop, ByRef mWidth, ByRef mHeight)
 
         ; Iterate through all monitors.
         Loop, %m%
-        {   ; Check if the window is on this monitor.
+        { ; Check if the window is on this monitor.
             SysGet, Mon, Monitor, %A_Index%
             SysGet, MonArea, MonitorWorkArea, %A_Index%
             if (x >= MonLeft && x <= MonRight && y >= MonTop && y <= MonBottom)
@@ -652,11 +681,15 @@ VirtScreenPos(ByRef mLeft, ByRef mTop, ByRef mWidth, ByRef mHeight)
         }
     }
 }
-ExpandEnvVars(ppath)
-{
-	VarSetCapacity(dest, 2000)
-	DllCall("ExpandEnvironmentStrings", "str", ppath, "str", dest, int, 1999, "Cdecl int")
-	return dest
+ExpandEnvVars(ppath) {
+    VarSetCapacity(dest, 2000)
+    DllCall("ExpandEnvironmentStrings", "str", ppath, "str", dest, int, 1999, "Cdecl int")
+return dest
+}
+
+WriteLog(text) {
+    FormatTime, time, A_Now, HH:mm:ss
+    FileAppend, % time ": " text "`n", logfile.txt ; can provide a full path to write to another directory
 }
 
 /*
